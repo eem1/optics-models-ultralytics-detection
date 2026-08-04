@@ -32,6 +32,10 @@ Ensure you have local credentials so the container can download test files from 
 gcloud auth application-default login
 ```
 
+```bash
+chmod +r ~/.config/gcloud/application_default_credentials.json
+```
+
 **2. Build the Docker Container**
 ```bash
 docker build -t optics-yolo-model:latest .
