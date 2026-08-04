@@ -14,7 +14,6 @@ Before deploying to the cloud, you should bake your custom model into the contai
 
 1. Fork this repository and clone it to your local machine (or Google Cloud Workstation).
 2. **CRITICAL:** You must place your default YOLO weights file in the root of the repository and name it exactly `model.pt`. 
-   * *If you do not do this, the Docker build step will fail because it explicitly looks for this file to bake into the container image.*
 
 ```bash
 git clone https://github.com/csbrown-noaa/optics-models-yolo-template.git
