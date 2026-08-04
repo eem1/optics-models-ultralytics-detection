@@ -1,40 +1,41 @@
-# NOAA NMFS Optics Model Deployment Template ("Hello World")
+# NOAA NMFS Optics Model Deployment Template (Ultralytics YOLO)
 
-Welcome! This repository is a starting template for deploying your custom Computer Vision models into the Optics SI Airflow ecosystem. If you have an Ultralytics-family model or a VIAME-family model 🛑 **STOP!**, there are existing frameworks for that - please use those - it's easier that way. :)
+Welcome! This repository is a starting template for deploying custom **Ultralytics YOLO** Computer Vision models into the Optics SI Airflow ecosystem on Google Cloud. 
 
-Our infrastructure requires models to run inside isolated Docker containers, expose an HTTP endpoint, and communicate with Google Cloud Storage (GCS). We have pre-written most of this infrastructure for you, so you can just focus on importing your model and getting predictions into the expected shape.
+Our infrastructure requires models to run inside isolated Docker containers, expose an HTTP endpoint, and communicate with Google Cloud Storage (GCS). We have pre-written the heavy lifting for you. This repository expects you to provide a `.pt` weights file, and it will automatically handle downloading inputs, running inference using Ultralytics, and formatting the output into strict KWCOCO JSON.
 
 ---
 
-# 🟢 Phase 1: Deploying the "Hello World" Baseline
+## 🟢 Phase 1: Local Setup & Testing
 
-Before writing any custom computer vision code, we are going to deploy this repository exactly as it is. It currently contains a "dummy" model that draws random bounding boxes. 
+Before deploying to the cloud, you should bake your custom model into the container and test it locally.
 
-By deploying this dummy model first, you will verify that your local Docker setup, Google Cloud permissions, and Airflow configurations are working perfectly.
+### 🏁 Step 1: Fork, Clone, and Add Weights
 
-## 🏁 Step 1: Fork and Clone
-
-Before changing any code, fork this repository and clone it to your local machine (or Google Cloud Workstation). All subsequent commands assume you are running them from the root of this cloned directory.
+1. Fork this repository and clone it to your local machine (or Google Cloud Workstation).
+2. **CRITICAL:** You must place your default YOLO weights file in the root of the repository and name it exactly `model.pt`. 
+   * *If you do not do this, the Docker build step will fail because it explicitly looks for this file to bake into the container image.*
 
 ```bash
-git clone https://github.com/csbrown-noaa/optics-models-hello-world.git
-cd optics-models-hello-world
+git clone https://github.com/csbrown-noaa/optics-models-yolo-template.git
+cd optics-models-yolo-template
+# Copy your weights in...
+cp /path/to/your/best.pt ./model.pt
 ```
 
-## 💻 Step 2: Test the Dummy Locally
+### 💻 Step 2: Test Locally
 
-Before deploying to the cloud, verify the dummy code works on your laptop/workstation.  We recommend using the Google Cloud workstations for this.  They already have `docker` and `gcloud` and other useful utilities installed.
+We recommend using the Google Cloud workstations for testing, as they already have `docker` and `gcloud` installed.
 
 **1. Authenticate with Google Cloud**
-Ensure you have Google Cloud credentials available locally so the container can download the test files:
+Ensure you have local credentials so the container can download test files from GCS:
 ```bash
 gcloud auth application-default login
 ```
 
 **2. Build the Docker Container**
-
 ```bash
-docker build -t optics-hello-world:latest .
+docker build -t optics-yolo-model:latest .
 ```
 
 **3. Run the Container**
@@ -43,138 +44,52 @@ docker build -t optics-hello-world:latest .
 docker run -p 8080:8080 \
   -v ~/.config/gcloud:/tmp/.config/gcloud \
   -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/.config/gcloud/application_default_credentials.json \
-  optics-hello-world:latest
+  optics-yolo-model:latest
 ```
 
-**4. Prepare Your Test Payloads**
-We have provided template JSON payloads in the local `test_payloads/` directory along with some sample media. 
-
-First, open the JSON files locally on your machine. Replace all the `<TODO_YOUR_FOLDER>` placeholders with a unique folder name you control (e.g., your username).
-
-Next, you must upload the local test images, the test video, and your newly modified `input_manifest.json` up to that exact Google Cloud Storage location (e.g., `gs://ggn-nmfs-osi-dev-1-data/scott/test-images/`). *Without this step, your local Docker container won't have anything to download during the test!*
-
-**5. Send Test Requests**
-In a new terminal (while your Docker container is still running), test the different data ingestion methods:
+**4. Send a Test Request**
+With your container running, open a new terminal and send a JSON payload to test it. 
+*(Ensure you have updated the GCS paths in your test payload to point to actual media files you have access to).*
 
 ```bash
-# Test 1: Single Video
-curl -X POST http://localhost:8080/predict \
-     -H "Content-Type: application/json" \
-     -d @test_payloads/test_payload_video.json
-
-# Test 2: Multiple Images
 curl -X POST http://localhost:8080/predict \
      -H "Content-Type: application/json" \
      -d @test_payloads/test_payload_images.json
-
-# Test 3: Using a Manifest
-curl -X POST http://localhost:8080/predict \
-     -H "Content-Type: application/json" \
-     -d @test_payloads/test_payload_manifest.json
 ```
-
-If successful, your terminal will log the processing steps, and new KWCOCO files will appear in your GCS bucket!
-
-## ☁️ Step 3: Deploy to Cloud
-
-Once you are happy with local testing, we will push this container to the Google Artifact Registry.
-
-***!!!!NB!!!!*** The Artifact Registry is where everyone's models lives.  By pushing your docker image to the registry, there is a risk that you may overwrite existing docker images.  Please be careful here.
-
-**1. Authenticate with Google Cloud**
-Didn't we just do this??!!  Yes, but we used this to get application credentials for the docker image.  Since the docker image is doing work **on your behalf**, it needs its own set of credentials.  This login is so that you can interact directly with gcloud, which is what we're doing now.
-```bash
-gcloud auth login
-```
-
-Let's list the existing images in the registry first:
-
-```bash
-gcloud artifacts packages list \
-  --project=ggn-nmfs-osi-dev-1 \
-  --location=us-central1 \
-  --repository=nmfs-dev-uc1-docker-repository
-```
-
-You should see optics-hello-world in here.  By deploying the image you just built, you are going to "cover up" the old image.  The old image will still be there somewhere, buried in the history, but the `optics-hello-world:latest` image that you just built will be the new image that everyone has access to in the Optics SI.  This is fine - that's what this image is for.  However, it is important to note that in general, this deployment process **replaces** existing images in the repo.
-
-Now that we've been thoroughly warned, let's move along.
-
-```bash
-# Tag your image for the registry
-docker tag optics-hello-world:latest us-central1-docker.pkg.dev/ggn-nmfs-osi-dev-1/nmfs-dev-uc1-docker-repository/optics-hello-world:latest
-
-# Push it
-docker push us-central1-docker.pkg.dev/ggn-nmfs-osi-dev-1/nmfs-dev-uc1-docker-repository/optics-hello-world:latest
-```
-
-## ⚙️ Step 4: Hook it into Airflow
-
-To make your model available in the system, you normally must register it in the Airflow DAG.  We are going to skip this step for now, as the optics-hello-world model is already available in [the optics batch processing DAG](TODO)
-
-The DAGs are just python files stored in a bucket [here](https://console.cloud.google.com/storage/browser/us-central1-composer-env1-73848881-bucket/dags).  You can see the existing ones in there.  Open up [the optics batch processing DAG](TODO) to view the contents.
-
-Locate the `MODEL_JOB_MAP` dictionary in the DAG file and see the entries for the various models. It's just a dictionary containing a hard-coded list of all of the available models and the relevant configuration for that model.  They look something like this:
-
-```python
-    "optics-hello-world": {
-        "region": "us-central1",
-        "image": "us-central1-docker.pkg.dev/ggn-nmfs-osi-dev-1/nmfs-dev-uc1-docker-repository/optics-hello-world:latest",
-        "cpu": 4,
-        "memory": "16Gi",
-        "gpu": 1,                   # Change to 0 if CPU only
-        "gpu_type": "nvidia-l4",    # Set to None if CPU only
-        "machine_type": "g2-standard-4", 
-        "timeout": 360000,
-        "command": ["python"],
-        "args": ["/workspace/inference_runner.py"] # <--- DO NOT CHANGE THIS
-    }
-```
-
-Note the "image" field.  This is precisely the image that you just built and pushed into the registry!  That tells the DAG which image to delegate to when you select the "optics-hello-world" model in the dropdown.
-
-## 🚀 Step 5: Triggering in Airflow
-
-When you run a job in Google Cloud Batch, the container boots up on an isolated, headless Virtual Machine. It doesn't have a user interface to accept manual inputs or local curl commands.
-
-Because of this, **Airflow requires your JSON trigger payload to be uploaded to GCS first**. Airflow will pass the GCS URI of your JSON file to the headless VM, which will then download it and start the processing loop you just tested.  So, go back to find your favorite test payload that you created in Step 2.  We are going to upload that to GCS.
-
-1. Upload your finalized JSON configuration to GCS (e.g., `gs://ggn-nmfs-osi-dev-1-data/my-folder/trigger_payload.json`).
-2. Go to the Airflow UI and click **Trigger DAG w/ config**.
-3. Set the `model_type` to `optics-hello-world`.
-4. Set the `input_file` parameter to the GCS URI of your uploaded JSON payload.
-5. Hit **Trigger** and monitor your job's progress in the logs!
 
 ---
 
-# 🔬 Phase 2: Bring Your Own Model (BYOM)
+## ⚙️ Configuration & Features
 
-Congratulations! You have successfully executed a full end-to-end pipeline. Now it is time to replace the "dummy" code with your actual science.
+This template supports several advanced features through the JSON Airflow payload.
 
-You will likely need to edit only the `model.py`, which is where your prediction code lives, and the `Dockerfile`, which handles the dependencies of your code and the other base dependencies of the project. The rest of the files (`app.py`, `inference_runner.py`) are abstract plumbing that handle the annoying parts: downloading videos from the cloud, starting web servers, managing memory, and uploading your final results back to the cloud.
+### YOLO Inference Options (Kwargs Passthrough)
+Any key-value pairs you place inside the `"options"` object of your config will be passed directly to the `YOLO.predict()` method as `**kwargs`. This means you can control confidence, IOU, image size, and more, directly from the Airflow UI without changing code.
 
+```json
+"config": {
+    "options": {
+        "conf": 0.25,
+        "iou": 0.45,
+        "imgsz": 1280
+    }
+}
+```
 
-## 🧠 Step 6: Write Your Logic
+### Dynamic Weights Override
+While the container is built with a default `model.pt` baked in, you can instruct it to download a different set of weights at runtime by providing a GCS URI in the `"weights"` key.
 
-Open `model.py`. You will see the "Hello World" logic that assigns random bounding boxes. 
+```json
+"config": {
+    "weights": "gs://my-bucket/path/to/experimental_weights.pt",
+    "options": { ... }
+}
+```
+**⚠️ Performance Warning:** Using dynamic weights provides great flexibility for A/B testing, but it has performance tradeoffs. Downloading large `.pt` files from GCS at runtime will increase the latency of the job startup and consume more network bandwidth. For highly scaled production jobs, baking the weights into the container image is preferred.
 
-Replace this logic with your actual framework. 
-*   Read the input images/videos from the provided `input_dir`.
-*   Load custom weights or thresholds from the `config` dictionary.
-*   Run your specific computer vision framework.
-*   Save your output to the `output_file_path` in an appropriate serialization format.  We recommend using the [KWCOCO (Kitware COCO)](https://kwcoco.readthedocs.io/en/latest/) JSON specification, as shown in the example code.  KWCOCO supports both images and video, and supports a wide range of annotation types such as classification, detection, and segmentation.  If we all stick to KWCOCO, then we can build interoperable pipelines that we only have to write once, and can share between groups.
+### Native Video & KWCOCO Support
+This template natively handles both images and videos. All outputs are formatted into the **KWCOCO (Kitware COCO)** JSON specification.
 
-## 📦 Step 7: Update Dependencies
+*   **For Images:** Standard COCO image and annotation records are created.
+*   **For Videos:** The template automatically registers the video in the KWCOCO `"videos"` array. As YOLO processes the video frame-by-frame, it registers each frame in the `"images"` array with a `"video_id"` and `"frame_index"`, ensuring downstream tools can reconstruct the temporal tracking data. Bounding boxes are automatically converted from YOLO's `xyxy` format to COCO's `[x, y, width, height]`.
 
-If your model requires specific libraries (like `torch`, `tensorflow`, or `ultralytics`), you must add them to the `requirements.txt` file. We have already included OpenCV (`opencv-python-headless`) for you.
-
-If you need heavy system-level packages (like custom NVIDIA drivers or specific `apt-get` binaries), you can add those to the `Dockerfile`.
-
-## 🔄 Step 8: Re-build and Re-deploy
-
-Now that your custom code is in place, simply repeat Phase 1!
-1. Test it locally using `curl` (Step 2).
-2. Pick a different name for your docker image (not optics-hello-world).  Feel free to continue using optics-hello-world to test on.  Try not to clutter up the artifact registry with a bunch of `test_pipeline-model_v8` sort of thing.  We all have to share this space.
-3. Build and push a new version to the Artifact Registry (Step 3). Note: **Increment your version tag** (e.g., `v1.1`) so you don't overwrite your previous work!  We recommend pushing your latest image with the :latest tag that always points to the latest model.  This makes it so that you don't have to repeatedly update the DAG.
-4. Update the Airflow DAG `MODEL_JOB_MAP` to point to your `:latest` image (Step 3).
-5. Trigger the DAG!

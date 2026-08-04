@@ -1,128 +1,129 @@
-"""
-model.py - The Biologist's Sandbox
-
-Welcome! If you are integrating a new model into the NOAA/NMFS ecosystem, 
-THIS IS THE ONLY PYTHON FILE YOU NEED TO EDIT.
-
-The surrounding infrastructure (app.py, inference_runner.py) handles downloading 
-files from Google Cloud Storage (GCS), setting up the web server, and uploading 
-the final results back to GCS. 
-
-Your goal:
-1. Read the input images/videos from `input_dir`.
-2. Load any custom weights or configurations from `config`.
-3. Run your specific computer vision framework.
-4. Save your output to `output_file_path` (we highly encourage KWCOCO format).
-"""
-
 import os
 import json
-import random
-import cv2
+import tempfile
+from ultralytics import YOLO
+import util
 
 def run_inference(input_dir: str, output_file_path: str, config: dict):
     """
-    Core inference logic. 
+    Core inference logic for Ultralytics YOLO models.
     
     Parameters
     ----------
     input_dir : str
-        Local directory where all your input images/videos have ALREADY been downloaded.
+        Local directory where all input images/videos have been downloaded.
     output_file_path : str
-        The exact local file path where you MUST save your final JSON/KWCOCO results.
+        The exact local file path where final KWCOCO results MUST be saved.
     config : dict
-        The "config" dictionary passed from the Airflow payload. Contains paths 
-        to your downloaded weights, hyperparameters, etc.
+        The configuration dictionary from the Airflow payload.
     """
+    print("[MODEL] Starting YOLO inference process...")
     
-    print(f"[MODEL] Starting inference...")
-    print(f"[MODEL] Scanning {input_dir} for input files...")
+    # 1. Resolve Weights
+    weights_path = "/workspace/model.pt" # Default baked-in weights
+    custom_weights_uri = config.get("weights")
     
-    # 1. Discover the files that the infrastructure downloaded for you
-    input_files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+    # Use a temporary directory for custom weights to avoid polluting the workspace
+    # across multiple invocations in the same container.
+    temp_dir = tempfile.TemporaryDirectory()
     
-    if not input_files:
-        print("[MODEL] WARNING: No input files found in directory!")
-        
-    # 2. Extract configurations (hyperparameters, thresholds, etc.)
-    # In a real model, you'd load your PyTorch/Tensorflow weights here.
-    # The config dictionary comes directly from the JSON payload triggered by Airflow.
-    conf_thresh = config.get("options", {}).get("conf_thresh", 0.5)
-    print(f"[MODEL] Using confidence threshold: {conf_thresh}")
+    if custom_weights_uri:
+        print(f"[MODEL] Dynamic weights override detected. Downloading {custom_weights_uri}...")
+        weights_path = os.path.join(temp_dir.name, "custom_model.pt")
+        util.download_gcs_uri(custom_weights_uri, weights_path)
     
-    # 3. Setup our output structure (KWCOCO format)
-    # KWCOCO is an extension of MS-COCO used widely for CV data.
+    print(f"[MODEL] Loading YOLO model from {weights_path}...")
+    model = YOLO(weights_path)
+    
+    # 2. Extract YOLO Options
+    # Any keys inside "options" are passed directly to YOLO's predict method.
+    options = config.get("options", {})
+    print(f"[MODEL] Using YOLO inference options: {options}")
+
+    # 3. Setup Output Structure (KWCOCO format)
     kwcoco_output = {
-        "info": {"description": "Hello World Fake Model Output"},
-        "categories": [
-            {"id": 1, "name": "fish"},
-            {"id": 2, "name": "coral"}
-        ],
+        "info": {"description": "Ultralytics YOLO Output"},
+        "categories": [],
+        "videos": [],
         "images": [],
         "annotations": []
     }
     
-    # 4. Simulate running inference on each file
-    annotation_id = 1
-    for image_id, filename in enumerate(input_files, start=1):
-        filepath = os.path.join(input_dir, filename)
-        
-        # Extract actual dimensions from the media file
-        width, height = 1920, 1080 # Fallback default
-        try:
-            # Check if it's likely a video
-            if filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
-                cap = cv2.VideoCapture(filepath)
-                if cap.isOpened():
-                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    cap.release()
-            else:
-                # Treat as an image
-                img = cv2.imread(filepath)
-                if img is not None:
-                    height, width = img.shape[:2]
-        except Exception as e:
-            print(f"[MODEL] Warning: Could not read dimensions for {filename}: {e}")
-
-        # Add the image entry to KWCOCO
-        kwcoco_output["images"].append({
-            "id": image_id,
-            "file_name": filename,
-            "width": width,
-            "height": height 
+    # Populate categories dynamically from the model's loaded names
+    for class_id, class_name in model.names.items():
+        kwcoco_output["categories"].append({
+            "id": int(class_id),
+            "name": str(class_name)
         })
         
-        # Simulate finding 1 to 3 random objects in this file
-        num_detections = random.randint(1, 3)
-        for _ in range(num_detections):
-            # Generate random bounding box [x, y, width, height] bounded by media size
-            max_x = max(1, width - 200)
-            max_y = max(1, height - 200)
-            bbox = [
-                random.randint(0, max_x), 
-                random.randint(0, max_y), 
-                random.randint(50, 200), 
-                random.randint(50, 200)
-            ]
-            
-            # Add the annotation entry
-            kwcoco_output["annotations"].append({
-                "id": annotation_id,
-                "image_id": image_id,
-                "category_id": random.choice([1, 2]), # random fish or coral
-                "bbox": bbox,
-                "score": round(random.uniform(conf_thresh, 1.0), 3) # random confidence
-            })
-            annotation_id += 1
-            
-        print(f"[MODEL] Processed {filename} ({width}x{height}) - Found {num_detections} objects.")
+    # 4. Discover and Process Files
+    input_files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+    if not input_files:
+        print("[MODEL] WARNING: No input files found in directory!")
         
-    # 5. Save the output
-    # You MUST save your results to the `output_file_path` provided to this function.
-    # The infrastructure will automatically grab this file and upload it to GCS.
+    video_id_counter = 1
+    image_id_counter = 1
+    annotation_id_counter = 1
+    
+    for filename in input_files:
+        filepath = os.path.join(input_dir, filename)
+        is_video = filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))
+        
+        current_vid_id = None
+        if is_video:
+            kwcoco_output["videos"].append({
+                "id": video_id_counter,
+                "name": filename
+            })
+            current_vid_id = video_id_counter
+            video_id_counter += 1
+            
+        print(f"[MODEL] Processing {filename}...")
+        
+        # Run YOLO inference
+        # YOLO handles both images and videos seamlessly, yielding results frame-by-frame.
+        results = model.predict(source=filepath, stream=True, **options)
+        
+        for frame_idx, result in enumerate(results):
+            height, width = result.orig_shape
+            
+            # Register Image/Frame in KWCOCO
+            image_entry = {
+                "id": image_id_counter,
+                "file_name": filename if not is_video else f"{filename}_frame_{frame_idx:06d}",
+                "width": width,
+                "height": height
+            }
+            
+            if is_video:
+                image_entry["video_id"] = current_vid_id
+                image_entry["frame_index"] = frame_idx
+                
+            kwcoco_output["images"].append(image_entry)
+            
+            # Register Annotations
+            for box in result.boxes:
+                # YOLO outputs xyxy (top-left x, top-left y, bottom-right x, bottom-right y)
+                # KWCOCO requires [top-left x, top-left y, width, height]
+                x1, y1, x2, y2 = box.xyxy.cpu().numpy()[0]
+                coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+                
+                kwcoco_output["annotations"].append({
+                    "id": annotation_id_counter,
+                    "image_id": image_id_counter,
+                    "category_id": int(box.cls.cpu().numpy()[0]),
+                    "bbox": coco_bbox,
+                    "score": float(box.conf.cpu().numpy()[0])
+                })
+                annotation_id_counter += 1
+                
+            image_id_counter += 1
+            
+    # 5. Save the Output
     print(f"[MODEL] Writing KWCOCO results to {output_file_path}")
     with open(output_file_path, 'w') as f:
         json.dump(kwcoco_output, f, indent=4)
         
+    # Cleanup temp directory holding custom weights
+    temp_dir.cleanup()
     print("[MODEL] Inference complete!")

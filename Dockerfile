@@ -12,10 +12,14 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
+# Copy application and infrastructure files
 COPY app.py .
 COPY inference_runner.py .
+COPY util.py .
 COPY model.py .
+
+# Bake in the default Ultralytics weights provided by the user
+COPY model.pt /workspace/model.pt
 
 ENV HOME=/workspace
 
