@@ -43,12 +43,13 @@ docker build -t optics-yolo-model:latest .
 docker run -p 8080:8080 \
   -v ~/.config/gcloud:/tmp/.config/gcloud \
   -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/.config/gcloud/application_default_credentials.json \
+  -e GOOGLE_CLOUD_PROJECT=ggn-nmfs-osi-dev-1 \
   optics-yolo-model:latest
 ```
 
 **4. Send a Test Request**
 With your container running, open a new terminal and send a JSON payload to test it. 
-*(Ensure you have updated the GCS paths in your test payload to point to actual media files you have access to).*
+***(Ensure you have updated the GCS paths in your test payload to point to actual media files you have access to).***
 
 ```bash
 curl -X POST http://localhost:8080/predict \
