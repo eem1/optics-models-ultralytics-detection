@@ -1,11 +1,8 @@
-import os
-import sys
-import json
-import time
-import subprocess
+import os, sys, json, time, subprocess, yaml
 import urllib.request
-from urllib.error import URLError, HTTPError
+from urllib.error import URLError
 from google.cloud import storage
+import util
 
 HOST = "http://localhost:8080"
 HEALTH_ENDPOINT = f"{HOST}/isalive"
@@ -105,8 +102,17 @@ def main():
     print("==================================================", flush=True)
     print("  Starting Cloud Batch Inference Wrapper          ", flush=True)
     print("==================================================", flush=True)
-    
+
+    config_yaml_file = os.environ.get("YAML_CONFIG_PATH")
+    output_bucket = os.environ.get("OUTPUT_BUCKET")
+    output_folder = os.environ.get("OUTPUT_FOLDER")
     input_file = os.environ.get("INPUT_FILE")
+
+    print(f'[RUNNER] config_yaml_file:{config_yaml_file}')
+    print(f'[RUNNER] input_file:{input_file}')
+    print(f'[RUNNER] output_bucket:{output_bucket}')
+    print(f'[RUNNER] output_folder:{output_folder}')
+    
     if not input_file:
         print("[RUNNER] Error: INPUT_FILE environment variable is not set.", flush=True)
         sys.exit(1)
@@ -116,8 +122,48 @@ def main():
     
     try:
         wait_for_server()
-        payload = download_json_from_gcs(input_file)
-        execute_prediction(payload)
+        json_input = download_json_from_gcs(input_file)
+
+        bucket_name = config_yaml_file.replace("gs://", "").split("/")[0]
+        blob_path = "/".join(config_yaml_file.replace("gs://", "").split("/")[1:])
+        client = storage.Client()
+        blob = client.bucket(bucket_name).blob(blob_path)
+    
+        if not blob.exists():
+            raise Exception(f"Config YAML not found at: {config_yaml_file}")
+
+        config_yaml = yaml.safe_load(blob.download_as_text())
+
+        # Use config_yaml to bridge the gap between the DAG and the payload before sending it to the model
+
+        if(not json_input.get("instances", [{}])[0].get("output_file", None)):
+           json_input["instances"][0]["output_file"] = f"gs://{output_bucket}/{output_folder.strip('/')}/results_sahi.csv"
+
+        if(not json_input.get("instances", [{}])[0].get("config", None)):
+            config = {} 
+            params = config_yaml.get("params", {})
+            if params:
+                config["slice_width"] = params.get("slice_width")
+                config["slice_height"] = params.get("slice_height")
+                config["overlap_ratio"] = params.get("overlap_ratio")
+                
+            payload = config_yaml.get("payload", {})
+            if payload:
+                config["options"] = payload
+
+            weights = config_yaml.get("weights",None)
+            if weights:
+                config["weights"] = weights
+
+            json_input["instances"][0]["config"] = config
+               
+
+        execute_prediction(json_input)
+        if config_yaml.get("upload_dataset_to_output_folder", False):
+            print("[RUNNER] Starting copy input dataset to GCS output folder.", flush=True)
+            input_uris = json_input.get("instances", [{}])[0].get("input_files", [])
+            util.copy_dataset_to_gcs_output_folder(input_uris, output_bucket, output_folder)
+
     finally:
         print("[RUNNER] Shutting down background server...", flush=True)
         server_process.terminate()

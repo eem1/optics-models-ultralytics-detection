@@ -1,0 +1,22 @@
+{
+    "instances":[
+        {
+            "input_files":[
+                "ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/ice_seals_2024_fl05_C_20240607_231032.590660_rgb.jpg",
+                "ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/ice_seals_2024_fl05_C_20240607_231152.607883_rgb.jpg",
+                "ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/ice_seals_2024_fl05_C_20240607_231354.628760_rgb.jpg"
+            ],
+            "output_file": "gs://ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/output-sahi/results_sahi.csv",
+            "config": {
+                "weights": "gs://ggn-nmfs-osi-dev-1-data/fish-segmentation-model/NOAA_AFSC_MML_Iceseals_31K.pt",
+                "slice_width": 6384,
+                "slice_height": 4782, 
+                "overlap_ratio": 0.2,
+
+                "options": {
+                    "conf": 0.5
+                }
+            }
+        }
+    ]
+}   

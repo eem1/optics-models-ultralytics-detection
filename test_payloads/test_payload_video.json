@@ -7,7 +7,7 @@
       "output_file": "gs://ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/test-outputs/bigfish_output.json",
       "config": {
         "options": {
-          "conf_thresh": 0.45
+          "conf": 0.45
         }
       }
     }

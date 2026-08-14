@@ -134,7 +134,7 @@ def predict():
                         executor.submit(download_gcs_uri, storage_client, uri, dest)
 
                 # 3. Call User's Custom Model Logic
-                local_output = os.path.join(run_dir, "results.json")
+                local_output = os.path.join(run_dir, "results.csv")
                 print(f"[{run_id}] Delegating to user model.py...")
                 
                 # We pass the input directory, the expected output path, and the config.
@@ -148,7 +148,7 @@ def predict():
                     raise FileNotFoundError(f"model.py finished, but did not create {local_output}")
 
                 # 4. Result Upload
-                print(f"[{run_id}] Uploading results to {output_file}...")
+                print(f"[{run_id}] Uploading results to {output_file}", flush=True)
                 upload_gcs_uri(storage_client, local_output, output_file)
                 
                 results.append({"status": "success", "output_file": output_file})

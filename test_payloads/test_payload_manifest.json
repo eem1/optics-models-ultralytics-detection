@@ -5,7 +5,7 @@
       "config": {
         "input_manifest": "gs://ggn-nmfs-osi-dev-1-data/<TODO_YOUR_FOLDER>/test-images/input_manifest.json",
         "options": {
-          "conf_thresh": 0.3
+          "conf": 0.3
         }
       }
     }

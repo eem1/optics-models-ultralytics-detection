@@ -1,0 +1,19 @@
+
+model_family: ultralytics
+
+# AFSC MML Ice Seals (31K)
+weights: "gs://ggn-nmfs-osi-dev-1-data/fish-segmentation-model/NOAA_AFSC_MML_Iceseals_31K.pt"
+
+output_type: csv # currently only support csv
+upload_dataset_to_output_folder: no # option yes/no. Default is 'no'
+
+# payload for YOLO options
+payload:
+  conf: 0.01
+
+# Model SAHI (Slicing Aided Hyper Inference) params
+params:
+  slice_width: 6384
+  slice_height: 4782 
+  overlap_ratio: 0.2
+  

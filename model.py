@@ -1,128 +1,141 @@
 import os
-import json
+import csv
 import tempfile
-from ultralytics import YOLO
+import datetime
 import util
+
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
+
+CONF_THRESHOLD = 0.01       # Keep low for small objects
+
+# Adjusted to match 4 quadrants of a 12768 x 9564 image
+SLICE_WIDTH = 6384           
+SLICE_HEIGHT = 4782
+OVERLAP_RATIO = 0.2         # 20% overlap to catch seals on the edge of tiles
+DEVICE = "cuda:0"           # Use 'cpu' if no GPU
+
+
+def is_image_file(filename):
+    valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
+    return filename.lower().strip().endswith(valid_exts)
+
 
 def run_inference(input_dir: str, output_file_path: str, config: dict):
     """
     Core inference logic for Ultralytics YOLO models.
-    
-    Parameters
-    ----------
-    input_dir : str
-        Local directory where all input images/videos have been downloaded.
-    output_file_path : str
-        The exact local file path where final KWCOCO results MUST be saved.
-    config : dict
-        The configuration dictionary from the Airflow payload.
     """
     print("[MODEL] Starting YOLO inference process...")
+    print(f"[MODEL] config:{config}")
     
     # 1. Resolve Weights
     weights_path = "/workspace/model.pt" # Default baked-in weights
     custom_weights_uri = config.get("weights")
+    print(f'[MODEL] custom_weights_uri:{custom_weights_uri}', flush=True)
     
-    # Use a temporary directory for custom weights to avoid polluting the workspace
-    # across multiple invocations in the same container.
     temp_dir = tempfile.TemporaryDirectory()
-    
+
     if custom_weights_uri:
-        print(f"[MODEL] Dynamic weights override detected. Downloading {custom_weights_uri}...")
-        weights_path = os.path.join(temp_dir.name, "custom_model.pt")
+        custom_weights = custom_weights_uri.split("/")[-1]
+        weights_path = os.path.join(temp_dir.name, custom_weights)
         util.download_gcs_uri(custom_weights_uri, weights_path)
     
-    print(f"[MODEL] Loading YOLO model from {weights_path}...")
-    model = YOLO(weights_path)
-    
-    # 2. Extract YOLO Options
-    # Any keys inside "options" are passed directly to YOLO's predict method.
-    options = config.get("options", {})
-    print(f"[MODEL] Using YOLO inference options: {options}")
+    print(f"[MODEL] Loading YOLO model: {weights_path} into SAHI...", flush=True)
 
-    # 3. Setup Output Structure (KWCOCO format)
-    kwcoco_output = {
-        "info": {"description": "Ultralytics YOLO Output"},
-        "categories": [],
-        "videos": [],
-        "images": [],
-        "annotations": []
-    }
+    conf_threshold = config.get("options", {}).get("conf", CONF_THRESHOLD)  
+    slice_width = config.get("slice_width", SLICE_WIDTH)
+    slice_height = config.get("slice_height", SLICE_HEIGHT)
+    overlap_ratio = config.get("overlap_ratio", OVERLAP_RATIO)
+    print(f"[CONFIG] conf_threshold={conf_threshold}, slice_width={slice_width}, slice_height={slice_height}, overlap_ratio={overlap_ratio}", flush=True)
     
-    # Populate categories dynamically from the model's loaded names
-    for class_id, class_name in model.names.items():
-        kwcoco_output["categories"].append({
-            "id": int(class_id),
-            "name": str(class_name)
-        })
-        
-    # 4. Discover and Process Files
-    input_files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
-    if not input_files:
+    # Load Model with full error logging (do not suppress exceptions)
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type='ultralytics',
+        model_path= weights_path,
+        confidence_threshold= conf_threshold,
+        device=DEVICE, 
+    )
+    
+    print(f"[MODEL] Finished loading the model")
+
+  
+    # 2. Discover Files with full paths
+    image_paths = [
+        os.path.join(input_dir, f) for f in os.listdir(input_dir) 
+        if os.path.isfile(os.path.join(input_dir, f)) and is_image_file(f)
+    ]
+    
+    if not image_paths:
         print("[MODEL] WARNING: No input files found in directory!")
         
-    video_id_counter = 1
-    image_id_counter = 1
-    annotation_id_counter = 1
-    
-    for filename in input_files:
-        filepath = os.path.join(input_dir, filename)
-        is_video = filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))
+    # 3. Prepare CSV Output
+    print(f'[MODEL] Writing output to: {output_file_path}')
+    with open(output_file_path, mode='w', newline='') as f:
+        writer = csv.writer(f)
         
-        current_vid_id = None
-        if is_video:
-            kwcoco_output["videos"].append({
-                "id": video_id_counter,
-                "name": filename
-            })
-            current_vid_id = video_id_counter
-            video_id_counter += 1
-            
-        print(f"[MODEL] Processing {filename}...")
+        # VIAME Headers
+        writer.writerow([
+            "# 1: Detection or Track-id", "2: Video or Image Identifier", 
+            "3: Unique Frame Identifier", "4-7: Img-bbox(TL_x", "TL_y", "BR_x", "BR_y)", 
+            "8: Detection or Length Confidence", "9: Target Length (0 or -1 if invalid)", 
+            "10-11+: Repeated Species", "Confidence Pairs or Attributes"
+        ])
         
-        # Run YOLO inference
-        # YOLO handles both images and videos seamlessly, yielding results frame-by-frame.
-        results = model.predict(source=filepath, stream=True, **options)
+        # Metadata Header
+        current_time = datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+        writer.writerow([
+            "# metadata", "exec_time: 0", "exported_by: python_sahi_script", 
+            f"exported_at: {current_time}", "", "", "", "", "", "", ""
+        ])
+
+        detection_id = 1
         
-        for frame_idx, result in enumerate(results):
-            height, width = result.orig_shape
+        # 4. Iterate Through Images
+        for i, full_img_path in enumerate(image_paths):
+            filename = os.path.basename(full_img_path)
+            print(f"[MODEL] [{i+1}/{len(image_paths)}] Slicing & Detecting: {filename}")
             
-            # Register Image/Frame in KWCOCO
-            image_entry = {
-                "id": image_id_counter,
-                "file_name": filename if not is_video else f"{filename}_frame_{frame_idx:06d}",
-                "width": width,
-                "height": height
-            }
-            
-            if is_video:
-                image_entry["video_id"] = current_vid_id
-                image_entry["frame_index"] = frame_idx
+            try:
+                result = get_sliced_prediction(
+                    full_img_path,
+                    detection_model,
+                    slice_height=slice_height,
+                    slice_width=slice_width,
+                    overlap_height_ratio=overlap_ratio,
+                    overlap_width_ratio=overlap_ratio,
+                    verbose=0
+                )
                 
-            kwcoco_output["images"].append(image_entry)
-            
-            # Register Annotations
-            for box in result.boxes:
-                # YOLO outputs xyxy (top-left x, top-left y, bottom-right x, bottom-right y)
-                # KWCOCO requires [top-left x, top-left y, width, height]
-                x1, y1, x2, y2 = box.xyxy.cpu().numpy()[0]
-                coco_bbox = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
-                
-                kwcoco_output["annotations"].append({
-                    "id": annotation_id_counter,
-                    "image_id": image_id_counter,
-                    "category_id": int(box.cls.cpu().numpy()[0]),
-                    "bbox": coco_bbox,
-                    "score": float(box.conf.cpu().numpy()[0])
-                })
-                annotation_id_counter += 1
-                
-            image_id_counter += 1
-            
-    # 5. Save the Output
-    print(f"[MODEL] Writing KWCOCO results to {output_file_path}")
-    with open(output_file_path, 'w') as f:
-        json.dump(kwcoco_output, f, indent=4)
+                # Parse SAHI Results for VIAME CSV
+                for object_prediction in result.object_prediction_list:
+                    bbox = object_prediction.bbox
+                    minx, miny, maxx, maxy = bbox.minx, bbox.miny, bbox.maxx, bbox.maxy
+                    
+                    score = object_prediction.score.value
+                    category_name = object_prediction.category.name
+                    
+                    row = [
+                        detection_id,          # 1. Detection ID
+                        filename,              # 2. Image Filename
+                        i,                     # 3. Frame ID
+                        f"{minx:.3f}",         # 4. TL_x
+                        f"{miny:.3f}",         # 5. TL_y
+                        f"{maxx:.3f}",         # 6. BR_x
+                        f"{maxy:.3f}",         # 7. BR_y
+                        f"{score:.5f}",        # 8. Confidence
+                        0,                     # 9. Target Length
+                        category_name,         # 10. Class
+                        f"{score:.5f}"         # 11. Attribute
+                    ]
+                    
+                    writer.writerow(row)
+                    detection_id += 1
+                    
+            except Exception as e:
+                print(f"[MODEL ERROR] Failed to process {filename}: {e}", flush=True)
+                raise e
+
+        print(f"[MODEL] Saved SAHI detections to: {output_file_path}")
         
     # Cleanup temp directory holding custom weights
     temp_dir.cleanup()
