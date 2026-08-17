@@ -179,7 +179,7 @@ See /test_dag folder in this repo:
 3. Select the `Model Type`  to `optics-yolo-sahi-model`.
 4. Set the `YAML Config File Path` field to  `gs://ggn-nmfs-osi-dev-1-data/my-folder/nmfs-optics-yolo-sahi-config.yaml`
 5. Set the `Input File` field to `gs://ggn-nmfs-osi-dev-1-data/my-folder/yolo-sahi-input-images.json`
-6. Set the `Output Folder` field ie. jen/out-sahi
+6. Set the `Output Folder` field (e.g. jen/out-sahi)
 7. Click **Trigger** and monitor your job's progress in the logs!
 
 **6. Monitor the DAG Progress and Job Status**
