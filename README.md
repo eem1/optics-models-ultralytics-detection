@@ -143,7 +143,7 @@ docker push us-central1-docker.pkg.dev/ggn-nmfs-osi-dev-1/nmfs-dev-uc1-docker-re
 
 To make your model available in the system, you must register it in the Airflow DAG.
 
-Download GCS `ggn-nmfs-osi-dev-1-data/configs/model_runtime_definitions.json` 
+Download GCS [model_runtime_definitions.json](ggn-nmfs-osi-dev-1-data/configs/model_runtime_definitions.json)
 
 The entries in the json are for the various models. It's just a dictionary containing a hard-coded list of all of the available models and the relevant configuration for that model. See `ultralytics` as an example.
 
@@ -164,22 +164,23 @@ Add your model to the json file and save it.
     }
 ```
 
-Upload the file back to the original GCS folder `ggn-nmfs-osi-dev-1-data/configs/model_runtime_definitions.json` 
+Upload the file back to the original GCS folder [model_runtime_definitions.json](ggn-nmfs-osi-dev-1-data/configs/model_runtime_definitions.json)
 
 
 **4. Prepare the Input Files to Trigger the Pipeline in Airflow DAG**
 
-See /dag_files folder in this repo:
+See /test_dag folder in this repo:
 1. Upload your YAML Config file to GCS (e.g., `gs://ggn-nmfs-osi-dev-1-data/my-folder/nmfs-optics-yolo-sahi-config.yaml`).
 2. Upload your input JSON file to GCS (e.g., `gs://ggn-nmfs-osi-dev-1-data/my-folder/yolo-sahi-input-images.json`).
 
 **5: Triggering Pipeline**
 1. Go to Google Cloud console, on search bar `Airflow`, select `Managed Airflow` ->  `composer-env1` -> `Open Airflow UI` tab
 2. Locate the `nmfs-optics-pipeline-longrunning-dag`, click **Trigger**.
-3. Select the `Model Type` parameter to `optics-yolo-sahi-model`.
-4. Set the `YAML Config File Path` parameter to  `gs://ggn-nmfs-osi-dev-1-data/my-folder/nmfs-optics-yolo-sahi-config.yaml`
-5. Set the `Input File` parameter to `gs://ggn-nmfs-osi-dev-1-data/my-folder/yolo-sahi-input-images.json`
-6. Hit **Trigger** and monitor your job's progress in the logs!
+3. Select the `Model Type`  to `optics-yolo-sahi-model`.
+4. Set the `YAML Config File Path` field to  `gs://ggn-nmfs-osi-dev-1-data/my-folder/nmfs-optics-yolo-sahi-config.yaml`
+5. Set the `Input File` field to `gs://ggn-nmfs-osi-dev-1-data/my-folder/yolo-sahi-input-images.json`
+6. Set the `Output Folder` field ie. jen/out-sahi
+7. Click **Trigger** and monitor your job's progress in the logs!
 
 **6. Monitor the DAG Progress and Job Status**
 1. To monitor the DAG progress, select `Managed Airflow` ->  `composer-env1` -> `DAGs`. Click `nmfs-optics-pipeline-longrunning-dag` to see the list DAG runs.
